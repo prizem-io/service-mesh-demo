@@ -1,0 +1,34 @@
+package main
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"time"
+)
+
+func main() {
+	http.HandleFunc("/sayHello", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[INFO] %s %s %s", r.Method, r.URL.Path, r.UserAgent())
+
+		time.Sleep(10 * time.Millisecond)
+
+		response := struct {
+			Message string `json:"message"`
+		}{
+			Message: "hello, world",
+		}
+
+		w.Header().Add("Content-Type", "application/json")
+		encoder := json.NewEncoder(w)
+		if err := encoder.Encode(&response); err != nil {
+			log.Printf("[ERROR] Failed to encode message: %s", err)
+			return
+		}
+	})
+
+	log.Printf("[INFO] Started server on :3002")
+	if err := http.ListenAndServe(":3002", nil); err != nil {
+		log.Fatalf("[ERROR] Failed to start server")
+	}
+}
