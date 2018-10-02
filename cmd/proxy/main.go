@@ -61,12 +61,14 @@ func main() {
 	registerListenPort := readEnv("REGISTER_PORT", 6060)
 	var controlPlaneRESTURI string
 	var controlPlaneGRPCURI string
+	var istioMixerURI string
 
 	flag.IntVar(&ingressListenPort, "ingressPort", ingressListenPort, "The ingress listening port")
 	flag.IntVar(&egressListenPort, "egressPort", egressListenPort, "The egress listening port")
 	flag.IntVar(&registerListenPort, "registerPort", registerListenPort, "The register listening port")
 	flag.StringVar(&controlPlaneRESTURI, "controlPlaneRESTURI", "http://localhost:8000", "The control plane REST URI")
 	flag.StringVar(&controlPlaneGRPCURI, "controlPlaneGRPCURI", "localhost:9000", "The control plane gRPC URI")
+	flag.StringVar(&istioMixerURI, "istioMixerURI", "localhost:9091", "The Istio Mixer URI")
 	flag.Parse()
 
 	// Load TLS key pair
@@ -88,6 +90,13 @@ func main() {
 	policies := map[string]proxy.MiddlewareLoader{}
 
 	eb := backoff.NewExponentialBackOff()
+	notify := func(err error, d time.Duration) {
+		logger.Errorf("Failed attempt: %v -> will retry in %s", err, d)
+	}
+
+	logger.Infof("Control Plane URIs:")
+	logger.Infof("- REST %s", controlPlaneRESTURI)
+	logger.Infof("- gRPC %s", controlPlaneGRPCURI)
 
 	r := discovery.NewRoutes(logger, controlPlaneRESTURI, policies)
 	e := discovery.NewEndpoints(logger, controlPlaneRESTURI)
@@ -95,20 +104,22 @@ func main() {
 
 	logger.Infof("Connecting to control plane...")
 	controller := control.New(logger, uuid.NewV4().String(), controlPlaneGRPCURI, r, e)
-	err = backoff.Retry(controller.Connect, eb)
+	err = backoff.RetryNotify(controller.Connect, eb, notify)
 	if err != nil {
 		logger.Fatalf("Could not connect to control plane: %v", err)
 	}
 
 	eb.Reset()
-	err = backoff.Retry(controller.SubscribeToRoutes, eb)
+	logger.Infof("Subscribing to routes...")
+	err = backoff.RetryNotify(controller.SubscribeToRoutes, eb, notify)
 	if err != nil {
 		logger.Fatalf("Could not subscribe to routes: %v", err)
 	}
 	defer controller.UnsubscribeFromRoutes()
 
 	eb.Reset()
-	err = backoff.Retry(controller.SubscribeToEndpoints, eb)
+	logger.Infof("Subscribing to endpoints...")
+	err = backoff.RetryNotify(controller.SubscribeToEndpoints, eb, notify)
 	if err != nil {
 		logger.Fatalf("Could not subscribe to endpoints: %v", err)
 	}
@@ -135,10 +146,10 @@ func main() {
 	logger.Infof("Connecting to Istio Mixer...")
 	var conn *grpc.ClientConn
 	eb.Reset()
-	err = backoff.Retry(func() (err error) {
-		conn, err = grpc.Dial("localhost:9091", grpc.WithInsecure())
+	err = backoff.RetryNotify(func() (err error) {
+		conn, err = grpc.Dial(istioMixerURI, grpc.WithInsecure())
 		return
-	}, eb)
+	}, eb, notify)
 	if err != nil {
 		logger.Fatalf("did not connect: %v", err)
 	}
@@ -224,6 +235,7 @@ func main() {
 	// Registration & Profiling endpoint
 	{
 		http.HandleFunc("/register", l.HandleRegister(nodeID, controlPlaneRESTURI, ingressListenPort))
+		http.HandleFunc("/info", l.HandleInfo)
 
 		logger.Infof("Register starting on :%d", registerListenPort)
 		listener, _ := net.Listen("tcp", fmt.Sprintf("localhost:%d", registerListenPort))
@@ -252,6 +264,7 @@ func main() {
 
 	//////
 
+	logger.Info("Proxy started")
 	logger.Infof("exit %v", g.Run())
 }
 
