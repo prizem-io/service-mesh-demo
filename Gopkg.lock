@@ -299,11 +299,11 @@
     "pkg/transport/rest",
   ]
   pruneopts = "UT"
-  revision = "df89f5f441814858357a8c0b0de4cba7c873289c"
+  revision = "29967302c933c35c79b77c2ccbce277bd6e18162"
 
 [[projects]]
   branch = "feature/refactoring"
-  digest = "1:a4d2f20a2bc7cc309c1c6bd396e12bd839aa4a15cebbd6ad3f512686d8a22883"
+  digest = "1:851d116869663c51831e3b12e65c81ec56a8ba9594cdd26d76015f871a320f4a"
   name = "github.com/prizem-io/h2"
   packages = [
     "frames",
@@ -311,7 +311,7 @@
     "proxy",
   ]
   pruneopts = "UT"
-  revision = "d71a8f901db173071aec735dcdcc80a4936d1f8e"
+  revision = "29dc79bbf604569cde4fd1249fca13f78d33151d"
 
 [[projects]]
   branch = "feature/refactoring"
