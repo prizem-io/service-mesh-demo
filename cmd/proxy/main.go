@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff"
-	"github.com/istio/api/mixer/v1"
+	mixer "github.com/istio/api/mixer/v1"
 	"github.com/oklog/run"
 	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/prizem-io/h2/proxy"
@@ -153,7 +153,8 @@ func main() {
 	if err != nil {
 		logger.Fatalf("did not connect: %v", err)
 	}
-	client := v1.NewMixerClient(conn)
+	client := mixer.NewMixerClient(conn)
+	reporter := istio.NewReporter(client, 10000, 10*time.Second)
 
 	//////
 
@@ -166,7 +167,7 @@ func main() {
 			upstreams := director.NewUpstreams(20)
 			d := director.New(logger, r.GetPathInfo, e.GetSourceInstance, l.GetServiceNodes, upstreams, proxy.DefaultUpstreamDialers, nil, director.RoundRobin,
 				timer.New(logger),
-				istio.New(nodeID.String(), client, istio.Inbound),
+				istio.New(nodeID.String(), reporter.C, istio.Inbound),
 				opentracingmw.New(logger, t, opentracingmw.Server),
 			)
 
@@ -192,7 +193,7 @@ func main() {
 			var err error
 			upstreams := director.NewUpstreams(20)
 			d := director.New(logger, r.GetPathInfo, l.GetSourceInstance, e.GetServiceNodes, upstreams, proxy.DefaultUpstreamDialers, &tlsConfig, director.LeastLoad,
-				istio.New(nodeID.String(), client, istio.Outbound),
+				istio.New(nodeID.String(), reporter.C, istio.Outbound),
 				opentracingmw.New(logger, t, opentracingmw.Client),
 			)
 
@@ -243,6 +244,15 @@ func main() {
 			return http.Serve(listener, nil)
 		}, func(error) {
 			listener.Close()
+		})
+	}
+	// Istio telemetry reporter
+	{
+		g.Add(func() error {
+			return reporter.Process()
+		}, func(error) {
+			reporter.Stop()
+			reporter.Flush()
 		})
 	}
 	// This function just sits and waits for ctrl-C.
