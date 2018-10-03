@@ -252,7 +252,6 @@ func main() {
 			return reporter.Process()
 		}, func(error) {
 			reporter.Stop()
-			reporter.Flush()
 		})
 	}
 	// This function just sits and waits for ctrl-C.
