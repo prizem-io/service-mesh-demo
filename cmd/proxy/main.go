@@ -251,7 +251,7 @@ func main() {
 		g.Add(func() error {
 			return reporter.Process()
 		}, func(error) {
-			reporter.Stop()
+			reporter.Close()
 		})
 	}
 	// This function just sits and waits for ctrl-C.
