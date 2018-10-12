@@ -24,9 +24,9 @@ import (
 	"github.com/cenkalti/backoff"
 	mixer "github.com/istio/api/mixer/v1"
 	"github.com/oklog/run"
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/prizem-io/h2/proxy"
-	uuid "github.com/satori/go.uuid"
+	"github.com/satori/go.uuid"
 	jaegerconfig "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -155,7 +155,7 @@ func main() {
 		logger.Fatalf("did not connect: %v", err)
 	}
 	client := mixer.NewMixerClient(conn)
-	reporter := istio.NewReporter(client, 10000, 10*time.Second)
+	reporter := istio.NewReporter(client, 10000, 5*time.Second)
 
 	//////
 

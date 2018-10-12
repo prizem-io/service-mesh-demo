@@ -315,7 +315,7 @@
 
 [[projects]]
   branch = "feature/refactoring"
-  digest = "1:d46f0d9d84a84a858b2fbab2af84abfee79762e5f654ff9b36da2ad1a622e83a"
+  digest = "1:c7bde51d8d4c7e24c6de9299de2d312a3c2619087e9a757d7a6a5c8561286673"
   name = "github.com/prizem-io/proxy"
   packages = [
     "pkg/control/grpc",
@@ -324,6 +324,7 @@
     "pkg/log",
     "pkg/middleware/istio",
     "pkg/middleware/opentracing",
+    "pkg/middleware/retry",
     "pkg/middleware/timer",
     "pkg/tls",
     "pkg/tracing/opentracing",
@@ -643,6 +644,7 @@
     "github.com/prizem-io/proxy/pkg/log",
     "github.com/prizem-io/proxy/pkg/middleware/istio",
     "github.com/prizem-io/proxy/pkg/middleware/opentracing",
+    "github.com/prizem-io/proxy/pkg/middleware/retry",
     "github.com/prizem-io/proxy/pkg/middleware/timer",
     "github.com/prizem-io/proxy/pkg/tls",
     "github.com/prizem-io/proxy/pkg/tracing/opentracing",
