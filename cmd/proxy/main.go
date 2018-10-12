@@ -38,6 +38,7 @@ import (
 	internallog "github.com/prizem-io/proxy/pkg/log"
 	"github.com/prizem-io/proxy/pkg/middleware/istio"
 	opentracingmw "github.com/prizem-io/proxy/pkg/middleware/opentracing"
+	"github.com/prizem-io/proxy/pkg/middleware/retry"
 	"github.com/prizem-io/proxy/pkg/middleware/timer"
 	tlsreloader "github.com/prizem-io/proxy/pkg/tls"
 	tracing "github.com/prizem-io/proxy/pkg/tracing/opentracing"
@@ -193,6 +194,7 @@ func main() {
 			var err error
 			upstreams := director.NewUpstreams(20)
 			d := director.New(logger, r.GetPathInfo, l.GetSourceInstance, e.GetServiceNodes, upstreams, proxy.DefaultUpstreamDialers, &tlsConfig, director.LeastLoad,
+				retry.New(logger, retry.RetryableRead5XX),
 				istio.New(nodeID.String(), reporter.C, istio.Outbound),
 				opentracingmw.New(logger, t, opentracingmw.Client),
 			)
