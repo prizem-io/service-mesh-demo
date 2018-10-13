@@ -15,10 +15,28 @@ import (
 	"github.com/prizem-io/proxy/pkg/log"
 )
 
+// UpstreamSelection is an enumeration to determine if a retry
+// attempt should use the same upstream or select a new one.
+type UpstreamSelection int
+
+const (
+	// SameUpstream indicates that the same upstream should be retried.
+	SameUpstream UpstreamSelection = iota
+	// NewUpstream indicates that the request should be retried on a different upstream.
+	NewUpstream
+)
+
 type (
 	Retry struct {
 		logger            log.Logger
 		defaultClassifier ResponseClassifier
+		upstreamSelection UpstreamSelection
+		responseReporter  ResponseReporter
+	}
+
+	ResponseReporter interface {
+		ReportSuccess(proxyInfo *director.ProxyInfo)
+		ReportFailure(proxyInfo *director.ProxyInfo)
 	}
 
 	State struct {
@@ -46,16 +64,18 @@ type (
 	}
 )
 
-func Load(logger log.Logger, classifier ResponseClassifier) proxy.MiddlewareLoader {
+func Load(logger log.Logger, classifier ResponseClassifier, upstreamSelection UpstreamSelection, responseReporter ResponseReporter) proxy.MiddlewareLoader {
 	return func(input interface{}) (proxy.Middleware, error) {
-		return New(logger, classifier), nil
+		return New(logger, classifier, upstreamSelection, responseReporter), nil
 	}
 }
 
-func New(logger log.Logger, defaultClassifier ResponseClassifier) *Retry {
+func New(logger log.Logger, defaultClassifier ResponseClassifier, upstreamSelection UpstreamSelection, responseReporter ResponseReporter) *Retry {
 	return &Retry{
 		logger:            logger,
 		defaultClassifier: defaultClassifier,
+		upstreamSelection: upstreamSelection,
+		responseReporter:  responseReporter,
 	}
 }
 
@@ -74,30 +94,32 @@ func (f *Retry) InitialState() interface{} {
 
 func (f *Retry) SendHeaders(ctx *proxy.SHContext, params *proxy.HeadersParams, endStream bool) error {
 	state := ctx.State().(*State)
+	stream := ctx.Stream
+	proxyInfo := ctx.Info.(*director.ProxyInfo)
 
 	state.shctx = *ctx // Make a copy of the send headers context
 	state.sendBuf = append(state.sendBuf, frame{headers: params})
 
-	f.checkState(ctx.Info, state)
+	f.checkState(proxyInfo, state)
 
 	if state.requestHeaders == nil {
 		state.requestHeaders = params.Headers
 	}
 
 	if endStream {
-		proxyInfo := ctx.Info.(*director.ProxyInfo)
-		go f.waitForCallback(ctx.Stream, proxyInfo, state)
+		go f.waitForCallback(stream, proxyInfo, state)
 	}
 	return ctx.Next(params, endStream)
 }
 
 func (f *Retry) SendData(ctx *proxy.SDContext, data []byte, endStream bool) error {
 	state := ctx.State().(*State)
+	proxyInfo := ctx.Info.(*director.ProxyInfo)
 
 	state.sdctx = *ctx // Make a copy of the send data context
 	state.sendBuf = append(state.sendBuf, frame{data: data})
 
-	f.checkState(ctx.Info, state)
+	f.checkState(proxyInfo, state)
 
 	if endStream {
 		proxyInfo := ctx.Info.(*director.ProxyInfo)
@@ -128,6 +150,9 @@ func (f *Retry) waitForCallback(stream *proxy.Stream, proxyInfo *director.ProxyI
 			// Prevent processing received data for this stream
 			stream.Upstream.CancelStream(stream)
 			proxy.RespondWithError(stream, proxy.ErrGatewayTimeout, 504)
+			if f.responseReporter != nil {
+				f.responseReporter.ReportFailure(proxyInfo)
+			}
 			return
 		}
 
@@ -166,8 +191,15 @@ func (f *Retry) waitForCallback(stream *proxy.Stream, proxyInfo *director.ProxyI
 			state.doRetry = false
 			state.recvBuf = state.recvBuf[:0]
 			f.logger.Infof("Retry attempt # %d", state.attempts)
-			// TODO: Select new upstream connection ???
-			stream.Upstream.RetryStream(stream)
+			switch f.upstreamSelection {
+			case SameUpstream:
+				stream.Upstream.RetryStream(stream)
+			case NewUpstream:
+				ok := stream.Connection.DirectStream(stream, state.requestHeaders)
+				if !ok {
+					return
+				}
+			}
 
 			// Send buffered request
 			for i, f := range state.sendBuf {
@@ -212,6 +244,19 @@ func (f *Retry) ReceiveHeaders(ctx *proxy.RHContext, params *proxy.HeadersParams
 			if state.requestHeaders != nil {
 				responseType := state.classifier(state.requestHeaders, status)
 
+				// For circuit breaking / Outlier detection
+				// Report success or failure
+				if f.responseReporter != nil {
+					proxyInfo := ctx.Info.(*director.ProxyInfo)
+					switch responseType {
+					case Success:
+						f.responseReporter.ReportSuccess(proxyInfo)
+					default:
+						f.responseReporter.ReportFailure(proxyInfo)
+					}
+				}
+
+				// Retry a retryable failure if we have not exhausted the max retry attempts.
 				if responseType == RetryableFailure && state.attempts < state.retry.Attempts {
 					// Prevent processing received data for this stream
 					ctx.Upstream.CancelStream(ctx.Stream)
@@ -248,9 +293,8 @@ func (f *Retry) ReceiveData(ctx *proxy.RDContext, data []byte, endStream bool) e
 	return nil
 }
 
-func (f *Retry) checkState(info interface{}, state *State) {
+func (f *Retry) checkState(proxyInfo *director.ProxyInfo, state *State) {
 	if state.retry == nil {
-		proxyInfo := info.(*director.ProxyInfo)
 		if proxyInfo.Operation.Retry != nil {
 			state.retry = proxyInfo.Operation.Retry
 		} else if proxyInfo.Service.Retry != nil {
@@ -261,9 +305,9 @@ func (f *Retry) checkState(info interface{}, state *State) {
 		state.classifier = f.defaultClassifier
 		if state.retry != nil {
 			if state.retry.ResponseClassifier != "" {
-				c, ok := ResponseClassifiers[state.retry.ResponseClassifier]
+				classifier, ok := ResponseClassifiers[state.retry.ResponseClassifier]
 				if ok {
-					state.classifier = c
+					state.classifier = classifier
 				} else {
 					f.logger.Warnf("unknown response classifier %q", state.retry.ResponseClassifier)
 				}
