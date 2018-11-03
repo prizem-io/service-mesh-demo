@@ -213,12 +213,12 @@ func (d *Director) Direct(remoteAddr net.Addr, headers proxy.Headers) (proxy.Tar
 		d.logger.Infof("Connecting to upstream %s", upstreamKey)
 		dial, ok := d.dialers.ForName(port.Protocol)
 		if !ok {
-			return proxy.Target{}, errors.Errorf("unknown upstream %s", port.Protocol)
+			return proxy.Target{}, errors.Errorf("no registered dialer for protocol %q", port.Protocol)
 		}
 
 		upstream, err = dial(proxyInfo.Service, node, &port, d.dialer)
 		if err != nil {
-			return proxy.Target{}, errors.Wrapf(err, "could not connect to %s", proxyInfo.Service.Name)
+			return proxy.Target{}, errors.Wrapf(err, "could not connect to service %q", proxyInfo.Service.Name)
 		}
 
 		d.upstreams.Put(upstreamKey, upstream)

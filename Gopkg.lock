@@ -509,7 +509,7 @@
 
 [[projects]]
   branch = "feature/refactoring"
-  digest = "1:789ebe2ba5af011a8392151f4d53819fcb5c1bb5ca1cd84acd6d225e54d5f256"
+  digest = "1:1965404838680d8e893e77ab678a4d674ea84085d8dcabe59fd247c693daa44a"
   name = "github.com/prizem-io/proxy"
   packages = [
     "pkg/control/grpc",
@@ -525,7 +525,7 @@
     "pkg/tracing/opentracing",
   ]
   pruneopts = "UT"
-  revision = "1096440b257509da5d418efba05837271f6ed7f2"
+  revision = "07b491484695e448cffce2e8c172775a878fa5e6"
 
 [[projects]]
   branch = "master"
