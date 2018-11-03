@@ -4,14 +4,11 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"time"
 )
 
 func main() {
 	http.HandleFunc("/sayHello", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[INFO] %s %s %s", r.Method, r.URL.Path, r.UserAgent())
-
-		time.Sleep(10 * time.Millisecond)
 
 		response := struct {
 			Message string `json:"message"`

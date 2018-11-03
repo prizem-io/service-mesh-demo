@@ -128,3 +128,9 @@ curl -s -k -u demo:demo -X GET \
   -H 'Accept: application/json; v=1' \
   -H 'Content-Type: application/json; v=1' | jq
 ```
+
+```bash
+hey -m GET -a demo:demo \
+  -A 'application/json; v=1' \
+  https://localhost:13000/hello
+```

@@ -5,10 +5,8 @@
 package director
 
 import (
-	"crypto/tls"
 	"math"
 	"net"
-	"strconv"
 	"sync/atomic"
 
 	"github.com/pkg/errors"
@@ -28,9 +26,10 @@ type Director struct {
 	destinationNodes DestinationNodesFn
 	loadBalancer     LoadBalancer
 	upstreams        *Upstreams
-	dialers          proxy.UpstreamDialers
-	tlsConfig        *tls.Config
-	middleware       []proxy.Middleware
+	dialers          UpstreamDialers
+	dialer           proxy.Dialer
+	//tlsConfig        *tls.Config
+	middleware []proxy.Middleware
 }
 
 type ProxyInfo struct {
@@ -38,6 +37,8 @@ type ProxyInfo struct {
 	Operation   *api.Operation
 	Source      *api.ServiceInstance
 	Destination *api.ServiceInstance
+	Node        *api.Node
+	Port        *api.Port
 	APIKey      string
 	Version     string
 	Authorization
@@ -90,7 +91,7 @@ func LeastLoad(proxyInfo *ProxyInfo, serviceNodes *discovery.ServiceNodes, nodes
 			selectedNode = node
 			continue
 		}
-		key := upstreams.Key(node, &serviceNodes.Service.Ports[0])
+		key := upstreams.Key(proxyInfo.Service, node, &serviceNodes.Service.Ports[0])
 		upstream, ok := upstreams.Get(key)
 
 		if ok {
@@ -114,8 +115,8 @@ func New(logger log.Logger,
 	sourceInstance SourceInstanceFn,
 	destinationNodes DestinationNodesFn,
 	upstreams *Upstreams,
-	dialers proxy.UpstreamDialers,
-	tlsConfig *tls.Config,
+	dialers UpstreamDialers,
+	dialer proxy.Dialer,
 	loadBalancer LoadBalancer,
 	middleware ...proxy.Middleware) *Director {
 	return &Director{
@@ -127,7 +128,7 @@ func New(logger log.Logger,
 		loadBalancer:     loadBalancer,
 		upstreams:        upstreams,
 		dialers:          dialers,
-		tlsConfig:        tlsConfig,
+		dialer:           dialer,
 		middleware:       middleware,
 	}
 }
@@ -146,7 +147,7 @@ func (d *Director) Direct(remoteAddr net.Addr, headers proxy.Headers) (proxy.Tar
 		return proxy.Target{}, err
 	}
 
-	//fmt.Printf("service name = %s\n", info.Service.Name)
+	//fmt.Printf("service name = %s\n", pathInfo.Service.Name)
 
 	source, err := d.sourceInstance(remoteAddr, headers)
 	if err != nil {
@@ -191,8 +192,10 @@ func (d *Director) Direct(remoteAddr net.Addr, headers proxy.Headers) (proxy.Tar
 	}
 	proxyInfo.Destination = &node.Services[0]
 	port := serviceNodes.Service.Ports[0]
+	proxyInfo.Node = node
+	proxyInfo.Port = &port
 
-	upstreamKey := d.upstreams.Key(node, &port)
+	upstreamKey := d.upstreams.Key(proxyInfo.Service, node, &port)
 	upstream, ok := d.upstreams.Get(upstreamKey)
 	//ok = false // TESTING
 
@@ -210,19 +213,12 @@ func (d *Director) Direct(remoteAddr net.Addr, headers proxy.Headers) (proxy.Tar
 		d.logger.Infof("Connecting to upstream %s", upstreamKey)
 		dial, ok := d.dialers.ForName(port.Protocol)
 		if !ok {
-			return proxy.Target{}, errors.Errorf("Unknown upstream %s", port.Protocol)
+			return proxy.Target{}, errors.Errorf("unknown upstream %s", port.Protocol)
 		}
 
-		url := net.JoinHostPort(node.Address.String(), strconv.Itoa(int(port.Port)))
-
-		var tlsConfig *tls.Config
-		if port.Secure {
-			tlsConfig = d.tlsConfig
-		}
-
-		upstream, err = dial(url, tlsConfig)
+		upstream, err = dial(proxyInfo.Service, node, &port, d.dialer)
 		if err != nil {
-			return proxy.Target{}, errors.Wrapf(err, "could not connect to %s", url)
+			return proxy.Target{}, errors.Wrapf(err, "could not connect to %s", proxyInfo.Service.Name)
 		}
 
 		d.upstreams.Put(upstreamKey, upstream)
