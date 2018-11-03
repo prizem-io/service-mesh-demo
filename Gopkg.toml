@@ -45,15 +45,15 @@
   name = "github.com/prizem-io/api"
 
 [[constraint]]
-  branch = "feature/refactoring"
+  branch = "master"
   name = "github.com/prizem-io/h2"
 
 [[constraint]]
-  branch = "feature/refactoring"
+  branch = "master"
   name = "github.com/prizem-io/control-plane"
 
 [[constraint]]
-  branch = "feature/refactoring"
+  branch = "master"
   name = "github.com/prizem-io/proxy"
 
 [[constraint]]
