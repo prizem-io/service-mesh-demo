@@ -10,7 +10,7 @@ import (
 	"github.com/prizem-io/h2/proxy"
 )
 
-type UpstreamDialer func(service *api.Service, node *api.Node, port *api.Port, dialer proxy.Dialer) (proxy.Upstream, error)
+type UpstreamDialer func(source *api.ServiceInstance, service *api.Service, node *api.Node, port *api.Port, dialer proxy.Dialer) (proxy.Upstream, error)
 
 // NamedUpstreamDialer associates a name with an upstream dialer.
 type NamedUpstreamDialer struct {
@@ -36,7 +36,7 @@ func (u UpstreamDialers) ForName(name string) (factory UpstreamDialer, ok bool) 
 var DefaultUpstreamDialers = UpstreamDialers{
 	{
 		Name: "HTTP/2",
-		Dailer: func(service *api.Service, node *api.Node, port *api.Port, dialer proxy.Dialer) (proxy.Upstream, error) {
+		Dailer: func(_ *api.ServiceInstance, service *api.Service, node *api.Node, port *api.Port, dialer proxy.Dialer) (proxy.Upstream, error) {
 			address := net.JoinHostPort(node.Address.String(), strconv.Itoa(int(port.Port)))
 
 			conn, err := dialer(address, port.Secure)
@@ -49,7 +49,7 @@ var DefaultUpstreamDialers = UpstreamDialers{
 	},
 	{
 		Name: "HTTP/1",
-		Dailer: func(service *api.Service, node *api.Node, port *api.Port, dialer proxy.Dialer) (proxy.Upstream, error) {
+		Dailer: func(_ *api.ServiceInstance, service *api.Service, node *api.Node, port *api.Port, dialer proxy.Dialer) (proxy.Upstream, error) {
 			address := net.JoinHostPort(node.Address.String(), strconv.Itoa(int(port.Port)))
 			return proxy.NewH1Upstream(address, port.Secure, dialer)
 		},

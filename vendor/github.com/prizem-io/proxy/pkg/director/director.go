@@ -19,17 +19,17 @@ import (
 )
 
 type Director struct {
-	logger           log.Logger
-	pathInfo         PathInfoFn
-	serviceChecker   ServiceChecker
-	sourceInstance   SourceInstanceFn
-	destinationNodes DestinationNodesFn
-	loadBalancer     LoadBalancer
-	upstreams        *Upstreams
-	dialers          UpstreamDialers
-	dialer           proxy.Dialer
-	//tlsConfig        *tls.Config
-	middleware []proxy.Middleware
+	logger            log.Logger
+	pathInfo          PathInfoFn
+	serviceChecker    ServiceChecker
+	sourceInstance    SourceInstanceFn
+	destinationNodes  DestinationNodesFn
+	loadBalancer      LoadBalancer
+	upstreams         *Upstreams
+	dialers           UpstreamDialers
+	dialer            proxy.Dialer
+	connectionChecker ConnectionChecker
+	middleware        []proxy.Middleware
 }
 
 type ProxyInfo struct {
@@ -55,6 +55,7 @@ type ServiceChecker func(proxyInfo *ProxyInfo) bool
 type PathInfoFn func(method, path string) (*discovery.PathInfo, error)
 type SourceInstanceFn func(remoteAddr net.Addr, headers proxy.Headers) (*api.ServiceInstance, error)
 type DestinationNodesFn func(service string) (*discovery.ServiceNodes, error)
+type ConnectionChecker func(conn net.Conn, pathInfo *discovery.PathInfo) error
 
 type LoadBalancer func(proxyInfo *ProxyInfo, serviceNodes *discovery.ServiceNodes, nodes []*api.Node, upstreams *Upstreams, serviceChecker ServiceChecker) *api.Node
 
@@ -117,23 +118,25 @@ func New(logger log.Logger,
 	upstreams *Upstreams,
 	dialers UpstreamDialers,
 	dialer proxy.Dialer,
+	connectionChecker ConnectionChecker,
 	loadBalancer LoadBalancer,
 	middleware ...proxy.Middleware) *Director {
 	return &Director{
-		logger:           logger,
-		pathInfo:         pathInfo,
-		serviceChecker:   serviceChecker,
-		sourceInstance:   sourceInstance,
-		destinationNodes: destinationNodes,
-		loadBalancer:     loadBalancer,
-		upstreams:        upstreams,
-		dialers:          dialers,
-		dialer:           dialer,
-		middleware:       middleware,
+		logger:            logger,
+		pathInfo:          pathInfo,
+		serviceChecker:    serviceChecker,
+		sourceInstance:    sourceInstance,
+		destinationNodes:  destinationNodes,
+		loadBalancer:      loadBalancer,
+		upstreams:         upstreams,
+		dialers:           dialers,
+		dialer:            dialer,
+		connectionChecker: connectionChecker,
+		middleware:        middleware,
 	}
 }
 
-func (d *Director) Direct(remoteAddr net.Addr, headers proxy.Headers) (proxy.Target, error) {
+func (d *Director) Direct(conn net.Conn, headers proxy.Headers) (proxy.Target, error) {
 	method := headers.ByName(":method")
 	path := headers.ByName(":path")
 
@@ -147,9 +150,17 @@ func (d *Director) Direct(remoteAddr net.Addr, headers proxy.Headers) (proxy.Tar
 		return proxy.Target{}, err
 	}
 
+	if d.connectionChecker != nil {
+		err := d.connectionChecker(conn, pathInfo)
+		if err != nil {
+			d.logger.Error(err)
+			return proxy.Target{}, err
+		}
+	}
+
 	//fmt.Printf("service name = %s\n", pathInfo.Service.Name)
 
-	source, err := d.sourceInstance(remoteAddr, headers)
+	source, err := d.sourceInstance(conn.RemoteAddr(), headers)
 	if err != nil {
 		return proxy.Target{}, err
 	}
@@ -216,8 +227,9 @@ func (d *Director) Direct(remoteAddr net.Addr, headers proxy.Headers) (proxy.Tar
 			return proxy.Target{}, errors.Errorf("no registered dialer for protocol %q", port.Protocol)
 		}
 
-		upstream, err = dial(proxyInfo.Service, node, &port, d.dialer)
+		upstream, err = dial(proxyInfo.Source, proxyInfo.Service, node, &port, d.dialer)
 		if err != nil {
+			d.logger.Error(err)
 			return proxy.Target{}, errors.Wrapf(err, "could not connect to service %q", proxyInfo.Service.Name)
 		}
 

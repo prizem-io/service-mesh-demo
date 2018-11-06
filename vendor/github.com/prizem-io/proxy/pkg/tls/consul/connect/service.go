@@ -179,7 +179,13 @@ func (s *Service) Dial(ctx context.Context, resolver Resolver) (net.Conn, error)
 		return nil, err
 	}
 
-	tlsConn := tls.Client(tcpConn, s.tlsCfg.Get(clientSideVerifier))
+	serverName := ServerNameFromContext(ctx)
+	tlsConfig := s.tlsCfg.Get(clientSideVerifier)
+	if serverName != "" {
+		tlsConfig = tlsConfig.Clone()
+		tlsConfig.ServerName = serverName
+	}
+	tlsConn := tls.Client(tcpConn, tlsConfig)
 	// Set deadline for Handshake to complete.
 	deadline, ok := ctx.Deadline()
 	if ok {

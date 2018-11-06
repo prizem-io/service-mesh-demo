@@ -1,6 +1,7 @@
 package connect
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -218,6 +219,9 @@ func newServerSideVerifier(client *api.Client, serviceName string) verifierFunc 
 			log.Printf("connect: invalid leaf certificate URI")
 			return errors.New("connect: invalid leaf certificate URI")
 		}
+		//println(certURI.URI().String())
+		//println(leaf.Subject.String())
+		//println(serviceName)
 
 		// No AuthZ if there is no client.
 		if client == nil {
@@ -305,6 +309,7 @@ type dynamicTLSConfig struct {
 	base *tls.Config
 
 	sync.RWMutex
+	// TODO - per service name
 	leaf  *tls.Certificate
 	roots *x509.CertPool
 	// readyCh is closed when the config first gets both leaf and roots set.
@@ -359,7 +364,8 @@ func (cfg *dynamicTLSConfig) Get(v verifierFunc) *tls.Config {
 			return v(cfg.Get(nil), rawCerts)
 		}
 	}
-	copy.GetCertificate = func(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	copy.GetCertificate = func(blah *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		println("ServerName1 = " + blah.ServerName)
 		leaf := cfg.Leaf()
 		if leaf == nil {
 			return nil, errors.New("tls: no certificates configured")
@@ -373,7 +379,8 @@ func (cfg *dynamicTLSConfig) Get(v verifierFunc) *tls.Config {
 		}
 		return leaf, nil
 	}
-	copy.GetConfigForClient = func(*tls.ClientHelloInfo) (*tls.Config, error) {
+	copy.GetConfigForClient = func(blah *tls.ClientHelloInfo) (*tls.Config, error) {
+		println("ServerName2 = " + blah.ServerName)
 		return cfg.Get(v), nil
 	}
 	return copy
@@ -457,4 +464,18 @@ func (cfg *dynamicTLSConfig) Ready() bool {
 // for initial startup. For ongoing health Ready() should be used.
 func (cfg *dynamicTLSConfig) ReadyWait() <-chan struct{} {
 	return cfg.readyCh
+}
+
+type serverNameKey struct{}
+
+func ContextWithServerName(ctx context.Context, serverName string) context.Context {
+	return context.WithValue(ctx, serverNameKey{}, serverName)
+}
+
+func ServerNameFromContext(ctx context.Context) string {
+	val := ctx.Value(serverNameKey{})
+	if serverName, ok := val.(string); ok {
+		return serverName
+	}
+	return ""
 }

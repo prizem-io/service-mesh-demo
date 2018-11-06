@@ -47,6 +47,8 @@ import (
 	tlsreloader "github.com/prizem-io/proxy/pkg/tls"
 	"github.com/prizem-io/proxy/pkg/tls/consul"
 	tracing "github.com/prizem-io/proxy/pkg/tracing/opentracing"
+
+	proxyconnect "github.com/prizem-io/proxy/pkg/tls/consul/connect"
 )
 
 func init() {
@@ -172,10 +174,15 @@ func main() {
 	consulManager := consul.New(consulClient)
 	defer consulManager.Close()
 
-	s, err := consulManager.GetService("test")
+	multiService, err := proxyconnect.NewMultiServiceWithLogger(consulClient, log.New(ioutil.Discard, "", 0))
 	if err != nil {
-		logger.Fatalf("did not get consul connect service: %v", err)
+		logger.Fatalf("did not get consul connect mulit service: %v", err)
 	}
+
+	// TODO add/remove services via registration callbacks
+	multiService.AddService("frontend")
+	multiService.AddService("backend")
+	multiService.AddService("message")
 
 	//////
 
@@ -185,7 +192,7 @@ func main() {
 		var listener net.Listener
 		g.Add(func() error {
 			upstreams := director.NewUpstreams(director.PerNode, 20)
-			d := director.New(logger, r.GetPathInfo, director.AlwaysService, e.GetSourceInstance, l.GetServiceNodes, upstreams, director.DefaultUpstreamDialers, simpleDialer, director.RoundRobin,
+			d := director.New(logger, r.GetPathInfo, director.AlwaysService, e.GetSourceInstance, l.GetServiceNodes, upstreams, director.DefaultUpstreamDialers, simpleDialer, nil, director.RoundRobin,
 				timer.New(logger),
 				istio.New(nodeID.String(), reporter.C, istio.Inbound),
 				opentracingmw.New(logger, t, opentracingmw.Server),
@@ -210,9 +217,9 @@ func main() {
 	{
 		var listener net.Listener
 		g.Add(func() error {
-			tlsc := s.ServerTLSConfig()
+			tlsc := multiService.ServerTLSConfig()
 			upstreams := director.NewUpstreams(director.PerNode, 20)
-			d := director.New(logger, r.GetPathInfo, director.AlwaysService, e.GetSourceInstance, l.GetServiceNodes, upstreams, director.DefaultUpstreamDialers, simpleDialer, director.RoundRobin,
+			d := director.New(logger, r.GetPathInfo, director.AlwaysService, e.GetSourceInstance, l.GetServiceNodes, upstreams, director.DefaultUpstreamDialers, simpleDialer, consul.CheckConnection, director.RoundRobin,
 				timer.New(logger),
 				istio.New(nodeID.String(), reporter.C, istio.Inbound),
 				opentracingmw.New(logger, t, opentracingmw.Server),
@@ -241,7 +248,12 @@ func main() {
 			dialers := director.UpstreamDialers{
 				{
 					Name: "HTTP/2",
-					Dailer: func(service *api.Service, node *api.Node, port *api.Port, dialer proxy.Dialer) (proxy.Upstream, error) {
+					Dailer: func(source *api.ServiceInstance, service *api.Service, node *api.Node, port *api.Port, dialer proxy.Dialer) (proxy.Upstream, error) {
+						s, err := consulManager.GetService(source.Service)
+						if err != nil {
+							return nil, err
+						}
+
 						address := net.JoinHostPort(node.Address.String(), strconv.Itoa(int(port.Port)))
 						conn, err := s.Dial(service, node, address)
 						if err != nil {
@@ -252,7 +264,12 @@ func main() {
 				},
 				{
 					Name: "HTTP/1",
-					Dailer: func(service *api.Service, node *api.Node, port *api.Port, dialer proxy.Dialer) (proxy.Upstream, error) {
+					Dailer: func(source *api.ServiceInstance, service *api.Service, node *api.Node, port *api.Port, dialer proxy.Dialer) (proxy.Upstream, error) {
+						s, err := consulManager.GetService(source.Service)
+						if err != nil {
+							return nil, err
+						}
+
 						address := net.JoinHostPort(node.Address.String(), strconv.Itoa(int(port.Port)))
 						consulDialer := func(address string, secure bool) (net.Conn, error) {
 							if secure {
@@ -267,7 +284,7 @@ func main() {
 
 			var err error
 			upstreams := director.NewUpstreams(director.PerService, 20)
-			d := director.New(logger, r.GetPathInfo, outlierMonitor.IsServiceable, l.GetSourceInstance, e.GetServiceNodes, upstreams, dialers, simpleDialer, director.LeastLoad,
+			d := director.New(logger, r.GetPathInfo, outlierMonitor.IsServiceable, l.GetSourceInstance, e.GetServiceNodes, upstreams, dialers, simpleDialer, consul.CheckConnection, director.LeastLoad,
 				retry.New(logger, retry.RetryableRead5XX, retry.NewUpstream, outlierMonitor),
 				istio.New(nodeID.String(), reporter.C, istio.Outbound),
 				opentracingmw.New(logger, t, opentracingmw.Client),

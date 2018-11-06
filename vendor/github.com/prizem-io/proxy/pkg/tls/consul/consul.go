@@ -3,16 +3,20 @@ package consul
 import (
 	"context"
 	"crypto/tls"
+	"io/ioutil"
+	"log"
 	"net"
 	"sync"
 
 	agentconnect "github.com/hashicorp/consul/agent/connect"
 	"github.com/hashicorp/consul/api"
-	"github.com/hashicorp/consul/connect"
 	"github.com/pkg/errors"
 
 	proxyapi "github.com/prizem-io/api/v1"
+	"github.com/prizem-io/h2/proxy"
+	"github.com/prizem-io/proxy/pkg/discovery"
 	proxytls "github.com/prizem-io/proxy/pkg/tls"
+	"github.com/prizem-io/proxy/pkg/tls/consul/connect"
 )
 
 type Connect struct {
@@ -52,7 +56,7 @@ func (c *Connect) GetService(serviceName string) (proxytls.Service, error) {
 	if !ok {
 		var err error
 		c.client.Connect()
-		service, err = connect.NewService(serviceName, c.client)
+		service, err = connect.NewServiceWithLogger(serviceName, c.client, log.New(ioutil.Discard, "", 0))
 		if err != nil {
 			return nil, errors.Wrapf(err, "could not create service %s", serviceName)
 		}
@@ -72,7 +76,7 @@ func (s *Service) ServerTLSConfig() *tls.Config {
 }
 
 func (s *Service) Dial(service *proxyapi.Service, node *proxyapi.Node, address string) (net.Conn, error) {
-	leafCert, _, err := s.client.Agent().ConnectCALeaf("test", &api.QueryOptions{
+	leafCert, _, err := s.client.Agent().ConnectCALeaf(service.Name, &api.QueryOptions{
 		Datacenter: node.Datacenter,
 	})
 	if err != nil {
@@ -81,11 +85,23 @@ func (s *Service) Dial(service *proxyapi.Service, node *proxyapi.Node, address s
 
 	certURI, err := agentconnect.ParseCertURIFromString(leafCert.ServiceURI)
 	if err != nil {
-		return nil, errors.Wrapf(err, "could not parse cert URI: %s", service.Namespace)
+		return nil, errors.Wrapf(err, "could not parse cert URI: %s", leafCert.ServiceURI)
 	}
 
-	return s.service.Dial(context.Background(), &connect.StaticResolver{
+	ctx := connect.ContextWithServerName(context.Background(), service.Name)
+
+	return s.service.Dial(ctx, &connect.StaticResolver{
 		Addr:    address,
 		CertURI: certURI,
 	})
+}
+
+func CheckConnection(conn net.Conn, pathInfo *discovery.PathInfo) error {
+	if tlsConn, ok := conn.(*tls.Conn); ok {
+		state := tlsConn.ConnectionState()
+		if state.ServerName != pathInfo.Service.Name {
+			return errors.Wrapf(proxy.ErrNotFound, "could not call service: got %q wanted %q", state.ServerName, pathInfo.Service.Name)
+		}
+	}
+	return nil
 }
